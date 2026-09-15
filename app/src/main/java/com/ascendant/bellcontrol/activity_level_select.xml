@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="#12211C"
+    android:padding="32dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Which classroom level is this board in?"
+        android:textColor="#ECE3D2"
+        android:textSize="20sp"
+        android:gravity="center"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="This sets the schedule shown and announced on this board. You can change it later from Settings."
+        android:textColor="#9FAE9C"
+        android:textSize="13sp"
+        android:gravity="center"
+        android:layout_marginBottom="28dp" />
+
+    <Button
+        android:id="@+id/elemButton"
+        android:layout_width="240dp"
+        android:layout_height="wrap_content"
+        android:text="Elementary"
+        android:layout_marginBottom="14dp" />
+
+    <Button
+        android:id="@+id/mshsButton"
+        android:layout_width="240dp"
+        android:layout_height="wrap_content"
+        android:text="Middle &amp; High School" />
+
+</LinearLayout>

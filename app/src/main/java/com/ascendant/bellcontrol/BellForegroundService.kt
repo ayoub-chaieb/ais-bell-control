@@ -25,10 +25,9 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var audioManager: AudioManager
 
-    // Mirrors the JS `rung` sets — one boundary announced once per day.
-    private val rungElem = mutableSetOf<Int>()
-    private val rungMshs = mutableSetOf<Int>()
+    private val rung = mutableSetOf<Int>()
     private var lastDay = -1
+    private var cachedSchedule: List<Period> = emptyList()
 
     private val tick = object : Runnable {
         override fun run() {
@@ -52,7 +51,6 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
-
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
@@ -62,45 +60,34 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun doTick() {
+        val level = Prefs.getLevel(this)
+        if (level == null) {
+            updateOngoingNotification(emptyList(), -1)
+            return
+        }
+
         val now = Calendar.getInstance()
         val dayOfYear = now.get(Calendar.DAY_OF_YEAR)
-        if (lastDay != -1 && lastDay != dayOfYear) {
-            rungElem.clear(); rungMshs.clear()
+        if (lastDay != dayOfYear) {
+            rung.clear()
+            val dhuhr = Prefs.resolveDhuhrMinutes(this, level)
+            cachedSchedule = Schedule.buildDailySchedule(level, dhuhr)
+            lastDay = dayOfYear
         }
-        lastDay = dayOfYear
 
         val nowMin = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
+        val bounds = Schedule.boundaries(cachedSchedule)
 
-        val hitElem = checkHit(Schedule.ELEM, rungElem, nowMin)
-        val hitMshs = checkHit(Schedule.MSHS, rungMshs, nowMin)
-
-        if (hitElem != null && hitMshs != null) {
-            if (hitElem == hitMshs) {
-                announce(hitElem)
-            } else {
-                announce("${Schedule.LABEL_ELEM}. $hitElem")
-                announce("${Schedule.LABEL_MSHS}. $hitMshs")
-            }
-        } else if (hitElem != null) {
-            announce("${Schedule.LABEL_ELEM}. $hitElem")
-        } else if (hitMshs != null) {
-            announce("${Schedule.LABEL_MSHS}. $hitMshs")
-        }
-
-        updateOngoingNotification(nowMin)
-    }
-
-    private fun checkHit(sched: List<Period>, rung: MutableSet<Int>, nowMin: Int): String? {
-        val bounds = Schedule.boundaries(sched)
         bounds.forEachIndexed { idx, t ->
             if (t == nowMin && !rung.contains(t)) {
                 rung.add(t)
                 val isDismissal = idx == bounds.size - 1
-                val upcoming = if (isDismissal) null else sched[idx]
-                return Schedule.announcementFor(upcoming?.name ?: "", isDismissal)
+                val upcoming = if (isDismissal) null else cachedSchedule[idx]
+                announce(Schedule.announcementFor(upcoming?.name ?: "", isDismissal))
             }
         }
-        return null
+
+        updateOngoingNotification(cachedSchedule, nowMin)
     }
 
     private fun announce(text: String) {
@@ -112,7 +99,7 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun requestAudioFocus() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val attrs = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANCE_ANNOUNCEMENT)
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build()
             val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
@@ -134,17 +121,16 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-    private fun updateOngoingNotification(nowMin: Int) {
+    private fun updateOngoingNotification(schedule: List<Period>, nowMin: Int) {
         val nm = getSystemService(NotificationManager::class.java)
-        nm.notify(NOTIF_ID_SERVICE, buildServiceNotification("Bell Control running", nextBellLabel(nowMin)))
+        nm.notify(NOTIF_ID_SERVICE, buildServiceNotification("Bell Control running", nextBellLabel(schedule, nowMin)))
     }
 
-    private fun nextBellLabel(nowMin: Int): String {
-        val allBounds = (Schedule.boundaries(Schedule.ELEM) + Schedule.boundaries(Schedule.MSHS))
-            .filter { it > nowMin }.distinct().sorted()
-        if (allBounds.isEmpty()) return "No more bells today"
-        val mins = allBounds.first() - nowMin
-        return "Next bell in $mins min"
+    private fun nextBellLabel(schedule: List<Period>, nowMin: Int): String {
+        if (schedule.isEmpty()) return "Open the app to set the classroom level"
+        val upcoming = Schedule.boundaries(schedule).filter { it > nowMin }
+        if (upcoming.isEmpty()) return "No more bells today"
+        return "Next bell in ${upcoming.first() - nowMin} min"
     }
 
     private fun showAlertNotification(text: String) {
@@ -162,12 +148,8 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun createChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_SERVICE, "Bell Control service", NotificationManager.IMPORTANCE_LOW)
-            )
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ALERTS, "Bell alerts", NotificationManager.IMPORTANCE_HIGH)
-            )
+            nm.createNotificationChannel(NotificationChannel(CHANNEL_SERVICE, "Bell Control service", NotificationManager.IMPORTANCE_LOW))
+            nm.createNotificationChannel(NotificationChannel(CHANNEL_ALERTS, "Bell alerts", NotificationManager.IMPORTANCE_HIGH))
         }
     }
 

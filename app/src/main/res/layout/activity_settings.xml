@@ -25,22 +25,14 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Dhuhr / Prayer time"
+        android:text="Central schedule sync"
         android:textColor="#C4914F"
         android:textSize="14sp"
         android:textStyle="bold"
         android:layout_marginBottom="8dp" />
 
-    <Switch
-        android:id="@+id/dhuhrAutoSwitch"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Calculate automatically (Riyadh)"
-        android:textColor="#ECE3D2"
-        android:layout_marginBottom="10dp" />
-
     <TextView
-        android:id="@+id/manualTimeLabel"
+        android:id="@+id/lastSyncLabel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:textColor="#9FAE9C"
@@ -48,10 +40,10 @@
         android:layout_marginBottom="10dp" />
 
     <Button
-        android:id="@+id/setManualTimeButton"
+        android:id="@+id/syncNowButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Set manual time"
+        android:text="Sync now"
         android:layout_marginBottom="30dp" />
 
     <Button

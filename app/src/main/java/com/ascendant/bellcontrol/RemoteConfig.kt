@@ -28,7 +28,7 @@ import java.util.concurrent.Executors
 object RemoteConfig {
 
     // TODO: replace with your published Google Sheet CSV link once it exists.
-    const val CONFIG_CSV_URL = "https://drive.google.com/file/d/1kuh82O_Dvdz8CbJ5UdWuA6l1nkLxYymX/view?usp=sharing"
+    const val CONFIG_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSZG0I_VRvPxUCcQ75xre6VtJugozgkYgEG3OhgV61tmcDcKuiLCucRveZZmp8Rt1LTxdSiLrT0K09f/pub?gid=600009173&single=true&output=csv"
 
     private const val FILE = "bell_control_remote_config"
     private const val KEY_PREFIX = "schedule_"

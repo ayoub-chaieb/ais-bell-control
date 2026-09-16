@@ -15,7 +15,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:paddingBottom="12dp">
+        android:paddingBottom="4dp">
 
         <TextView
             android:layout_width="0dp"
@@ -36,15 +36,6 @@
     </LinearLayout>
 
     <TextView
-        android:id="@+id/levelLabel"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:textColor="#C4914F"
-        android:textSize="13sp"
-        android:textStyle="bold"
-        android:paddingBottom="2dp" />
-
-    <TextView
         android:id="@+id/dateLabel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -53,71 +44,10 @@
         android:paddingBottom="16dp" />
 
     <LinearLayout
+        android:id="@+id/panelsContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:background="#1A2E27"
-        android:padding="18dp"
-        android:layout_marginBottom="16dp">
-
-        <TextView
-            android:id="@+id/periodName"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Loading…"
-            android:textColor="#ECE3D2"
-            android:textSize="26sp" />
-
-        <TextView
-            android:id="@+id/periodTime"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="#9FAE9C"
-            android:textSize="14sp"
-            android:paddingBottom="14dp" />
-
-        <ProgressBar
-            android:id="@+id/progressBar"
-            style="?android:attr/progressBarStyleHorizontal"
-            android:layout_width="match_parent"
-            android:layout_height="8dp"
-            android:max="1000"
-            android:progressTint="#C4914F"
-            android:progressBackgroundTint="#12211C"
-            android:layout_marginBottom="14dp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="bottom">
-
-            <TextView
-                android:id="@+id/countdownText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="--:--"
-                android:textColor="#C4914F"
-                android:textSize="36sp" />
-
-            <TextView
-                android:id="@+id/countdownLabel"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
-                android:paddingBottom="6dp"
-                android:textColor="#9FAE9C"
-                android:textSize="13sp" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/scheduleTable"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:background="#1A2E27"
-        android:layout_marginBottom="16dp" />
+        android:orientation="vertical" />
 
     <TextView
         android:id="@+id/settingsLink"

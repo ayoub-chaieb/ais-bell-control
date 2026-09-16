@@ -1,36 +1,41 @@
 # Bell Control — Android background app
 
-Native port of `bell-control-elementary.html` / `bell-control-middlehigh.html`,
-running as an always-on foreground service with a real on-screen schedule.
+Native port of the elementary/middle-high HTML schedule pages, running as an
+always-on foreground service with a real on-screen schedule, plus a
+free, serverless way to edit the schedule centrally.
 
-## What's new in this version
-- **First launch asks which classroom level the board is in** (Elementary,
-  or Middle & High — they're treated as one level, same as the HTML files).
-  The choice is saved on-device; change it any time from the in-app
-  **Settings** link.
-- **The visible screen now matches the HTML** — live clock, current period,
-  progress bar, countdown to the next bell, and the full schedule table for
-  whichever level this board was set to.
-- **Dhuhr (prayer) time is calculated, not hardcoded**, using a fully
-  offline astronomical formula (`PrayerTimes.kt`) for Riyadh — no API, no
-  cost, no network call. It recalculates itself every day, so it silently
-  tracks the real seasonal drift of solar noon.
-  - Elementary and Middle & High resolve their Dhuhr time completely
-    independently — they are never forced to pray together.
-  - **Reflow rule:** Prayer never starts before Dhuhr has actually occurred.
-    On the overwhelming majority of days that lands exactly on the school's
-    normal fixed slot (12:00 Elementary / 12:55 Middle & High, same as the
-    HTML). On the rare days real Dhuhr drifts later than that slot, Prayer —
-    and every period after it — is pushed back by the same amount, so a
-    lesson is never interrupted mid-period and Prayer is never held early.
-  - **Manual override per level**, in Settings, for whenever staff want to
-    pin Dhuhr to a specific time themselves instead of trusting the
-    calculation.
-- **No 2am auto-shutdown.** BenQ boards already have a built-in scheduled
-  power-off in system settings — check `Settings → Power → Schedule` (menu
-  path varies by BenQ model/firmware) on the board itself. That's more
-  reliable than anything a regular Android app can do, since a third-party
-  app can't power off hardware without root or Device Owner/MDM enrollment.
+## Architecture (current version)
+- **Level picker on first launch**: Elementary, Middle & High, or **All
+  Levels** — a combined display (both schedules side by side) for an admin
+  screen. Combined boards show everything but never play audio/TTS — only
+  Elementary and Middle & High boards do.
+- **Prayer time is fully manual now**, same as every other period — no
+  astronomical calculation. Adjust it in the central sheet like any other
+  row whenever the actual call to prayer shifts.
+- **Central, serverless config sync.** The whole schedule (periods, breaks,
+  Prayer — everything) lives in one published Google Sheet. Every board
+  polls it every 30 minutes, on app open, and via a manual "Sync now" in
+  Settings, and caches the last good copy so a board with no wifi right now
+  just keeps using the last schedule it successfully synced. Edit the
+  sheet once, every board picks it up on its own — no server, no per-board
+  updates, no rebuild.
+
+## Setting up the central sheet (one-time)
+1. Create a Google Sheet. Row 1 header: `level,period,start,end`.
+2. **File → Import → Upload**, choose `bell-schedule-starter.csv` (the file
+   I generated alongside this project — already has today's exact
+   schedule in it), **Replace current sheet**. This gives your boss a
+   working starting point instead of a blank grid.
+3. `level` must be exactly `ELEMENTARY` or `MIDDLE_HIGH` (case doesn't
+   matter). Times are 24-hour, `H:MM`, e.g. `6:45` or `13:10`.
+4. **File → Share → Publish to web** → select the sheet → format **CSV** →
+   **Publish**. Copy the link it gives you.
+5. Open `app/src/main/java/com/ascendant/bellcontrol/RemoteConfig.kt` in
+   the repo and replace the `CONFIG_CSV_URL` placeholder with that link.
+6. Commit — this triggers one final rebuild. After this, your boss never
+   touches GitHub again: he just edits cells in the sheet, and every board
+   picks up the change within 30 minutes (or instantly via "Sync now" in
+   Settings, or by reopening the app).
 
 ## Building it with zero local installs (GitHub Actions)
 Everything below happens in a browser — no Android Studio, no SDK, nothing
@@ -73,8 +78,9 @@ on screen.
    `strings.xml`, `themes.xml`.
 3. Copy everything from this project into the new one:
    - `app/src/main/java/com/ascendant/bellcontrol/*.kt` (Schedule, Prefs,
-     PrayerTimes, MainActivity, LevelSelectActivity, SettingsActivity,
-     BellForegroundService, BootReceiver)
+     RemoteConfig, MainActivity, LevelSelectActivity, SettingsActivity,
+     BellForegroundService, BootReceiver — `PrayerTimes.kt` is unused now
+     and safe to leave out or ignore)
    - `app/src/main/res/layout/*.xml` (activity_main, activity_level_select,
      activity_settings)
    - `app/src/main/res/values/strings.xml`, `themes.xml`
@@ -96,18 +102,19 @@ on screen.
   factory resets and reinstalls automatically.
 
 ## After install, on each board
-- Open the app once — it'll ask which classroom level this board is (pick
-  once, it's remembered).
+- Open the app once — it'll ask which classroom level this board is
+  (Elementary, Middle & High, or All Levels for a combined admin display).
 - This also triggers the notification permission prompt (Android 13+) and
   the "ignore battery optimizations" prompt. Accept both.
 - Check the board actually has a TTS engine with an English voice installed
   (Settings → Accessibility → Text-to-speech). Budget boards sometimes ship
   without one — sideload Google's TTS APK if `tts.speak()` stays silent.
 - You do **not** need to keep the app in the foreground — it's a background
-  service now, not a browser tab. The on-screen schedule is there for staff
-  to glance at, not a requirement for the bells/announcements to work.
-- If Dhuhr ever looks wrong for a specific board, open Settings on that
-  board and set it manually — no reinstall needed.
+  service. The on-screen schedule is there for staff to glance at, not a
+  requirement for the bells/announcements to work.
+- Make sure the board has wifi. If a board is ever offline for a while, it
+  just keeps running on the last schedule it successfully synced — nothing
+  breaks, it just won't see today's edits until it's back online.
 
 ## Note on the launcher icon
 The manifest deliberately doesn't reference `@mipmap/ic_launcher` — there's
@@ -125,5 +132,6 @@ in the manifest.
   `SoundPool` before `tts.speak()`), same idea as the JS `playBell()`.
 - Persistent notification shows "Next bell in N min" so staff can glance at
   it without opening the app.
-- Prayer's clock time is calculated per day instead of fixed in the source —
-  see `Schedule.kt` and `PrayerTimes.kt`.
+- Every period's clock time — Prayer included — comes from the central
+  sheet (or the bundled default before the first sync) instead of being
+  fixed in the source.

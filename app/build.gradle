@@ -29,6 +29,12 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
+
+    applicationVariants.all { variant ->
+        variant.outputs.all {
+            outputFileName = "ais-bell-system-${variant.name}.apk"
+        }
+    }
 }
 
 dependencies {

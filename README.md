@@ -1,137 +1,156 @@
-# Bell Control — Android background app
+# AIS Bell System
 
-Native port of the elementary/middle-high HTML schedule pages, running as an
-always-on foreground service with a real on-screen schedule, plus a
-free, serverless way to edit the schedule centrally.
+[![Build APK](https://github.com/ayoub-chaieb/ais-bell-control/actions/workflows/build.yml/badge.svg)](https://github.com/ayoub-chaieb/ais-bell-control/actions/workflows/build.yml)
 
-## Architecture (current version)
-- **Level picker on first launch**: Elementary, Middle & High, or **All
-  Levels** — a combined display (both schedules side by side) for an admin
-  screen. Combined boards show everything but never play audio/TTS — only
-  Elementary and Middle & High boards do.
-- **Prayer time is fully manual now**, same as every other period — no
-  astronomical calculation. Adjust it in the central sheet like any other
-  row whenever the actual call to prayer shifts.
-- **Central, serverless config sync.** The whole schedule (periods, breaks,
-  Prayer — everything) lives in one published Google Sheet. Every board
-  polls it every 30 minutes, on app open, and via a manual "Sync now" in
-  Settings, and caches the last good copy so a board with no wifi right now
-  just keeps using the last schedule it successfully synced. Edit the
-  sheet once, every board picks it up on its own — no server, no per-board
-  updates, no rebuild.
+A native Android background service that turns any smartboard into a school
+bell system — spoken period announcements, on-screen live schedule, and a
+centrally-managed timetable that every board picks up on its own, with no
+backend server to run or pay for.
 
-## Setting up the central sheet (one-time)
-1. Create a Google Sheet. Row 1 header: `level,period,start,end`.
-2. **File → Import → Upload**, choose `bell-schedule-starter.csv` (the file
-   I generated alongside this project — already has today's exact
-   schedule in it), **Replace current sheet**. This gives your boss a
-   working starting point instead of a blank grid.
-3. `level` must be exactly `ELEMENTARY` or `MIDDLE_HIGH` (case doesn't
-   matter). Times are 24-hour, `H:MM`, e.g. `6:45` or `13:10`.
+Built for Almanhal Schools, Riyadh. Runs on BenQ interactive displays as an
+always-on background app rather than a browser tab, so it survives screen
+locks, app switching, and reboots — the requirements a browser page can't
+meet.
+
+## What it does
+
+- **Spoken bell announcements** via Android text-to-speech at every period
+  boundary — start of lesson, breaks, Prayer, dismissal — for whichever
+  classroom level the board is set to.
+- **Three display modes**, chosen once per board on first launch:
+  - **Elementary** — that level's own schedule, on screen and spoken.
+  - **Middle & High School** — same, for the older level.
+  - **All Levels** — a combined dashboard showing both schedules side by
+    side (for an admin/office screen), still speaking both levels' bells.
+- **Live on-screen schedule**: clock, current period, progress bar,
+  countdown to the next bell, and the full day's table.
+- **Centrally managed schedule.** Periods, breaks, and Prayer all live in
+  one shared spreadsheet. Every board polls it in the background and
+  applies changes automatically — no reinstalling, no touching individual
+  boards.
+- **Offline-resilient.** Each board caches the last schedule it
+  successfully synced and keeps running normally through wifi drops; it
+  simply won't see new edits until connectivity returns.
+- **Survives reboots** via a boot receiver that restarts the background
+  service automatically.
+
+## Architecture
+
+┌─────────────────────┐ polls every 30 min ┌──────────────────────┐
+│ Google Sheet │ ───────────────────────────────▶ │ Android app (per │
+│ (published as CSV) │ + on open + manual │ board), cached │
+│ level, period, │ │ locally, offline-safe │
+│ start, end │ └──────────────────────┘
+└─────────────────────┘
+
+
+The schedule "backend" is a Google Sheet published to the web as a CSV
+endpoint — a free, always-on static file host with a spreadsheet UI for
+non-technical editing. Each board's foreground service fetches it on a
+timer, parses it, and caches the result in `SharedPreferences`. If a fetch
+fails (no wifi, sheet temporarily unreachable), the board just keeps using
+whatever it cached last — there's no hard dependency on connectivity at
+the moment a bell is due.
+
+Core components:
+- `BellForegroundService` — the always-on service; ticks every second,
+  fires TTS + notifications at period boundaries, re-syncs periodically.
+- `RemoteConfig` — fetches/parses/caches the published sheet.
+- `Schedule` — bundled default timetable, used until the first successful
+  sync (and as the fallback shape/format for the remote data).
+- `MainActivity` — live on-screen display; renders one or two schedule
+  panels depending on the board's level.
+- `LevelSelectActivity` / `SettingsActivity` — first-run level picker and
+  a small admin screen (re-pick level, force a sync, see last-synced time).
+- `BootReceiver` — restarts the service after a reboot.
+
+## DevOps / engineering notes
+
+This project doubled as a small CI/CD exercise: an Android app built and
+packaged entirely through GitHub Actions, with no local Android Studio
+install required for either development or distribution.
+
+**Pipeline** (`.github/workflows/build.yml`):
+- Triggers on every push to `main` (and manually via `workflow_dispatch`).
+- Runs on a GitHub-hosted `ubuntu-latest` runner, which already ships an
+  Android SDK — the pipeline accepts the SDK licenses and installs the one
+  missing build-tools version it needs, rather than provisioning a full
+  SDK from scratch. Early iterations used a third-party `setup-android`
+  action; it turned out to reference a legacy SDK package Google removed
+  from the repository, so the pipeline was simplified to lean on what the
+  runner already provides instead — fewer moving parts, one less thing
+  that can break upstream.
+- Java 17 via `actions/setup-java`, Gradle 8.4 pinned via
+  `gradle/actions/setup-gradle` (not the checked-in wrapper, to keep the
+  repo lighter).
+- `gradle assembleDebug` produces a debug-signed APK, named
+  `ais-bell-system-debug.apk` via a custom `applicationVariants` output
+  filename in `app/build.gradle` (Gradle's default `app-debug.apk` isn't
+  something you want handing out to a client).
+- The APK is uploaded as a build artifact (`actions/upload-artifact`),
+  downloadable straight from the Actions run — no signing infrastructure
+  or release pipeline needed for internal distribution to a handful of
+  boards.
+
+**Distribution config as a serverless "backend":** rather than standing up
+and paying for a server to push schedule updates to every board, the
+config layer is a published Google Sheet acting as a static CSV endpoint,
+polled by each device. It's the same pattern as a feature-flag or
+remote-config service, minus the infrastructure — appropriate for the
+actual scale and budget here (a handful of school boards, no uptime SLA
+needed beyond "eventually consistent within 30 minutes").
+
+**Reliability choices for an unattended device:** a foreground service
+(not a plain background service, which Android would kill) with its own
+notification channel keeps the process alive; a `BOOT_COMPLETED` receiver
+restarts it after power cycles or firmware updates; cached remote config
+means a connectivity gap degrades gracefully instead of breaking the bell
+schedule outright.
+
+## Building it
+
+No local Android Studio needed — the GitHub Actions workflow above builds
+it. Push to `main`, open the **Actions** tab, download the
+`ais-bell-system-debug-apk` artifact once the run goes green.
+
+To build locally instead: open the project in Android Studio (min SDK 24,
+compile/target as set in `app/build.gradle`) and run `Build → Build APK(s)`.
+
+## Setting up the central schedule (one-time)
+
+1. Create a Google Sheet with header row `level,period,start,end`.
+2. **File → Import → Upload**, choose `bell-schedule-starter.csv` (included
+   in this repo) as a starting point — it already matches the current
+   schedule. **Replace current sheet** on import.
+3. `level` is exactly `ELEMENTARY` or `MIDDLE_HIGH` (case-insensitive).
+   Times are 24-hour `H:MM`, e.g. `6:45` or `13:10`.
 4. **File → Share → Publish to web** → select the sheet → format **CSV** →
-   **Publish**. Copy the link it gives you.
-5. Open `app/src/main/java/com/ascendant/bellcontrol/RemoteConfig.kt` in
-   the repo and replace the `CONFIG_CSV_URL` placeholder with that link.
-6. Commit — this triggers one final rebuild. After this, your boss never
-   touches GitHub again: he just edits cells in the sheet, and every board
-   picks up the change within 30 minutes (or instantly via "Sync now" in
-   Settings, or by reopening the app).
+   **Publish**. Copy the resulting link.
+5. Paste that link into `CONFIG_CSV_URL` in
+   `app/src/main/java/com/ascendant/bellcontrol/RemoteConfig.kt`, commit
+   (one final rebuild). From then on, editing the sheet is the only thing
+   anyone needs to do — every board picks it up within 30 minutes, or
+   immediately via the in-app "Sync now" button.
 
-## Building it with zero local installs (GitHub Actions)
-Everything below happens in a browser — no Android Studio, no SDK, nothing
-on your machine.
+## Installing on a board
 
-1. Create a GitHub account if you don't have one (free).
-2. **New repository** (e.g. `bell-control-app`) — public or private, either
-   works.
-3. On the repo page: **Add file → Upload files**, then drag in everything
-   from this folder — `build.gradle`, `settings.gradle`,
-   `gradle.properties`, the whole `app/` folder, and the `.github/` folder
-   (most browsers support dragging folders straight into GitHub's uploader;
-   if yours doesn't, upload file-by-file, keeping the same paths). Commit.
-4. Go to the **Actions** tab. The `Build APK` workflow starts automatically
-   on that push (or click **Run workflow** if it doesn't).
-5. Wait ~3–5 minutes for the green checkmark, open that run, and download
-   the **BellControl-debug-apk** artifact at the bottom — it's a zip
-   containing `app-debug.apk`.
-6. Unzip and sideload that APK on the smartboards exactly as in the rollout
-   steps below.
+1. Enable "install from unknown sources" once per board.
+2. Sideload the APK (USB, or `adb install` over the network).
+3. Open it once — pick the classroom level, accept the notification and
+   battery-optimization prompts.
+4. Check the board has an English TTS voice installed (Settings →
+   Accessibility → Text-to-speech) — some budget boards ship without one.
+5. The app doesn't need to stay in the foreground; the bell service keeps
+   running regardless of what's on screen.
 
-This produces a **debug-signed** APK — perfectly fine for sideloading
-internally, just not for the Play Store. If you later want it MDM-pushed
-fleet-wide with a proper release signature, the workflow can be extended
-with a keystore stored in GitHub Secrets — say the word and I'll add that.
+## Known limitations
 
-## Why not just wrap the HTML in a WebView / PWA?
-Faster to set up, but Android suspends background tabs and kills their audio
-focus the moment the screen locks or another app comes forward — exactly the
-failure mode you're trying to avoid. This project ports the same logic
-natively so it keeps running, speaking, and notifying regardless of what's
-on screen.
-
-## Build steps (Android Studio)
-1. **File → New → New Project → Empty Views Activity**, Kotlin, package
-   `com.ascendant.bellcontrol`, min SDK 24. This gives you a working
-   gradle wrapper + default launcher icons — much less fiddly than hand-rolling
-   the wrapper.
-2. Delete the generated `MainActivity.kt`, `activity_main.xml`,
-   `strings.xml`, `themes.xml`.
-3. Copy everything from this project into the new one:
-   - `app/src/main/java/com/ascendant/bellcontrol/*.kt` (Schedule, Prefs,
-     RemoteConfig, MainActivity, LevelSelectActivity, SettingsActivity,
-     BellForegroundService, BootReceiver — `PrayerTimes.kt` is unused now
-     and safe to leave out or ignore)
-   - `app/src/main/res/layout/*.xml` (activity_main, activity_level_select,
-     activity_settings)
-   - `app/src/main/res/values/strings.xml`, `themes.xml`
-   - Merge `AndroidManifest.xml` (keep the generated `<application>` icon/theme
-     attributes if you like your wizard-generated launcher icon; add the
-     `<service>`, `<receiver>`, and `<uses-permission>` entries from this one).
-   - Merge `app/build.gradle` dependencies into the generated one.
-4. **Build → Generate Signed Bundle / APK → APK** (use a real keystore, even
-   a self-signed one — don't ship debug-signed to a fleet of boards).
-
-## Rolling it out to all the smartboards
-- **Fastest for a handful of boards:** enable "Install from unknown sources"
-  once per board, copy the APK via USB stick, tap to install.
-- **Faster for many boards on the same network:** `adb connect <board-ip>`
-  then `adb install BellControl.apk` per board (most smartboard Android
-  builds have ADB-over-network available in developer settings).
-- **If your fleet has an MDM** (many smartboard brands — Promethean, BenQ,
-  ViewSonic — support one): push the APK as a "required app" so it survives
-  factory resets and reinstalls automatically.
-
-## After install, on each board
-- Open the app once — it'll ask which classroom level this board is
-  (Elementary, Middle & High, or All Levels for a combined admin display).
-- This also triggers the notification permission prompt (Android 13+) and
-  the "ignore battery optimizations" prompt. Accept both.
-- Check the board actually has a TTS engine with an English voice installed
-  (Settings → Accessibility → Text-to-speech). Budget boards sometimes ship
-  without one — sideload Google's TTS APK if `tts.speak()` stays silent.
-- You do **not** need to keep the app in the foreground — it's a background
-  service. The on-screen schedule is there for staff to glance at, not a
-  requirement for the bells/announcements to work.
-- Make sure the board has wifi. If a board is ever offline for a while, it
-  just keeps running on the last schedule it successfully synced — nothing
-  breaks, it just won't see today's edits until it's back online.
-
-## Note on the launcher icon
-The manifest deliberately doesn't reference `@mipmap/ic_launcher` — there's
-no icon resource in this project, and referencing a missing one would fail
-the CI build. The app installs fine with Android's default icon. If you
-want a custom one, add `app/src/main/res/mipmap-*/ic_launcher.png` files
-and re-add `android:icon="@mipmap/ic_launcher"` to the `<application>` tag
-in the manifest.
-
-## What's intentionally different from the HTML version
-- No manual "enable audio" click needed — TTS doesn't have the browser's
-  autoplay-lock problem.
-- No "chime toggle" or two-bell/repeat-announcement sequence — add back
-  easily inside `announce()` in `BellForegroundService.kt` (play a tone via
-  `SoundPool` before `tts.speak()`), same idea as the JS `playBell()`.
-- Persistent notification shows "Next bell in N min" so staff can glance at
-  it without opening the app.
-- Every period's clock time — Prayer included — comes from the central
-  sheet (or the bundled default before the first sync) instead of being
-  fixed in the source.
+- Prayer time is manually set in the sheet, like every other period — it
+  does not auto-calculate; adjust it there whenever the actual time
+  shifts.
+- No launcher icon is bundled (`android:icon` is intentionally omitted so
+  CI doesn't fail on a missing resource) — the app installs with Android's
+  default icon. Add `mipmap-*/ic_launcher.png` resources and re-add
+  `android:icon` to customize.
+- Debug-signed only; fine for internal sideloading, not for Play Store
+  distribution.

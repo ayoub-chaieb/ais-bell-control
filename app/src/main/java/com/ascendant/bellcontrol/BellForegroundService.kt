@@ -25,9 +25,10 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var audioManager: AudioManager
 
-    private val rung = mutableSetOf<Int>()
+    // Keyed per underlying level (ELEMENTARY / MIDDLE_HIGH), since a combined board tracks both.
+    private val rung = mutableMapOf<Level, MutableSet<Int>>()
+    private val cachedSchedules = mutableMapOf<Level, List<Period>>()
     private var lastDay = -1
-    private var cachedSchedule: List<Period> = emptyList()
 
     private val tick = object : Runnable {
         override fun run() {
@@ -37,15 +38,12 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     // Picks up edits to the central sheet without waiting for the next day or a reopen.
+    // Always syncs both real levels regardless of which one this board displays — one CSV,
+    // shared by every board.
     private val periodicSync = object : Runnable {
         override fun run() {
-            val level = Prefs.getLevel(this@BellForegroundService)
-            if (level != null && level != Level.ALL_LEVELS) {
-                RemoteConfig.syncNow(this@BellForegroundService) { success, _ ->
-                    if (success) {
-                        cachedSchedule = RemoteConfig.getSchedule(this@BellForegroundService, level)
-                    }
-                }
+            RemoteConfig.syncNow(this@BellForegroundService) { success, _ ->
+                if (success) refreshCachedSchedules()
             }
             handler.postDelayed(this, SYNC_INTERVAL_MS)
         }
@@ -60,11 +58,8 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
         handler.post(tick)
         handler.postDelayed(periodicSync, SYNC_INTERVAL_MS)
 
-        val level = Prefs.getLevel(this)
-        if (level != null && level != Level.ALL_LEVELS) {
-            RemoteConfig.syncNow(this) { success, _ ->
-                if (success) cachedSchedule = RemoteConfig.getSchedule(this, level)
-            }
+        RemoteConfig.syncNow(this) { success, _ ->
+            if (success) refreshCachedSchedules()
         }
     }
 
@@ -83,36 +78,56 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
         super.onDestroy()
     }
 
+    /** Which real level(s) this board needs to track — both, if it's a combined display. */
+    private fun trackedLevels(boardLevel: Level): List<Level> =
+        if (boardLevel == Level.ALL_LEVELS) listOf(Level.ELEMENTARY, Level.MIDDLE_HIGH) else listOf(boardLevel)
+
+    private fun refreshCachedSchedules() {
+        val boardLevel = Prefs.getLevel(this) ?: return
+        trackedLevels(boardLevel).forEach { lvl ->
+            cachedSchedules[lvl] = RemoteConfig.getSchedule(this, lvl)
+        }
+    }
+
     private fun doTick() {
-        val level = Prefs.getLevel(this)
-        if (level == null || level == Level.ALL_LEVELS) {
-            // Not configured yet, or this is a display-only combined board — no bells from here.
-            updateOngoingNotification(emptyList(), -1, displayOnly = level == Level.ALL_LEVELS)
+        val boardLevel = Prefs.getLevel(this)
+        if (boardLevel == null) {
+            updateOngoingNotification(boardLevel, -1)
             return
         }
 
+        val levels = trackedLevels(boardLevel)
         val now = Calendar.getInstance()
         val dayOfYear = now.get(Calendar.DAY_OF_YEAR)
         if (lastDay != dayOfYear) {
-            rung.clear()
-            cachedSchedule = RemoteConfig.getSchedule(this, level)
+            levels.forEach { rung[it] = mutableSetOf() }
+            refreshCachedSchedules()
             lastDay = dayOfYear
         }
 
         val nowMin = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
-        val bounds = Schedule.boundaries(cachedSchedule)
+        val combined = boardLevel == Level.ALL_LEVELS
 
-        bounds.forEachIndexed { idx, t ->
-            if (t == nowMin && !rung.contains(t)) {
-                rung.add(t)
-                val isDismissal = idx == bounds.size - 1
-                val upcoming = if (isDismissal) null else cachedSchedule[idx]
-                announce(Schedule.announcementFor(upcoming?.name ?: "", isDismissal))
+        levels.forEach { lvl ->
+            val schedule = cachedSchedules[lvl] ?: return@forEach
+            val rungSet = rung.getOrPut(lvl) { mutableSetOf() }
+            val bounds = Schedule.boundaries(schedule)
+
+            bounds.forEachIndexed { idx, t ->
+                if (t == nowMin && !rungSet.contains(t)) {
+                    rungSet.add(t)
+                    val isDismissal = idx == bounds.size - 1
+                    val upcoming = if (isDismissal) null else schedule[idx]
+                    val text = Schedule.announcementFor(upcoming?.name ?: "", isDismissal)
+                    announce(if (combined) "${levelLabel(lvl)}. $text" else text)
+                }
             }
         }
 
-        updateOngoingNotification(cachedSchedule, nowMin, displayOnly = false)
+        updateOngoingNotification(boardLevel, nowMin)
     }
+
+    private fun levelLabel(lvl: Level) = if (lvl == Level.ELEMENTARY) "Elementary" else "Middle and High School"
 
     private fun announce(text: String) {
         requestAudioFocus()
@@ -145,12 +160,21 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-    private fun updateOngoingNotification(schedule: List<Period>, nowMin: Int, displayOnly: Boolean) {
+    private fun updateOngoingNotification(boardLevel: Level?, nowMin: Int) {
         val nm = getSystemService(NotificationManager::class.java)
         val text = when {
-            displayOnly -> "Combined display board — no bell audio here"
-            schedule.isEmpty() -> "Open the app to set the classroom level"
-            else -> nextBellLabel(schedule, nowMin)
+            boardLevel == null -> "Open the app to set the classroom level"
+            boardLevel == Level.ALL_LEVELS -> {
+                val parts = trackedLevels(boardLevel).mapNotNull { lvl ->
+                    val schedule = cachedSchedules[lvl] ?: return@mapNotNull null
+                    "${levelLabel(lvl)}: ${nextBellLabel(schedule, nowMin)}"
+                }
+                if (parts.isEmpty()) "Open the app to sync the schedule" else parts.joinToString("  •  ")
+            }
+            else -> {
+                val schedule = cachedSchedules[boardLevel]
+                if (schedule == null) "Open the app to sync the schedule" else nextBellLabel(schedule, nowMin)
+            }
         }
         nm.notify(NOTIF_ID_SERVICE, buildServiceNotification("Bell Control running", text))
     }

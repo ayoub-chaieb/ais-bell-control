@@ -36,6 +36,21 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    // Picks up edits to the central sheet without waiting for the next day or a reopen.
+    private val periodicSync = object : Runnable {
+        override fun run() {
+            val level = Prefs.getLevel(this@BellForegroundService)
+            if (level != null && level != Level.ALL_LEVELS) {
+                RemoteConfig.syncNow(this@BellForegroundService) { success, _ ->
+                    if (success) {
+                        cachedSchedule = RemoteConfig.getSchedule(this@BellForegroundService, level)
+                    }
+                }
+            }
+            handler.postDelayed(this, SYNC_INTERVAL_MS)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         tts = TextToSpeech(this, this)
@@ -43,6 +58,14 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
         createChannels()
         startForeground(NOTIF_ID_SERVICE, buildServiceNotification("Bell Control running", "Waiting for next bell…"))
         handler.post(tick)
+        handler.postDelayed(periodicSync, SYNC_INTERVAL_MS)
+
+        val level = Prefs.getLevel(this)
+        if (level != null && level != Level.ALL_LEVELS) {
+            RemoteConfig.syncNow(this) { success, _ ->
+                if (success) cachedSchedule = RemoteConfig.getSchedule(this, level)
+            }
+        }
     }
 
     override fun onInit(status: Int) {
@@ -55,14 +78,16 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         handler.removeCallbacks(tick)
+        handler.removeCallbacks(periodicSync)
         if (::tts.isInitialized) tts.shutdown()
         super.onDestroy()
     }
 
     private fun doTick() {
         val level = Prefs.getLevel(this)
-        if (level == null) {
-            updateOngoingNotification(emptyList(), -1)
+        if (level == null || level == Level.ALL_LEVELS) {
+            // Not configured yet, or this is a display-only combined board — no bells from here.
+            updateOngoingNotification(emptyList(), -1, displayOnly = level == Level.ALL_LEVELS)
             return
         }
 
@@ -70,8 +95,7 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
         val dayOfYear = now.get(Calendar.DAY_OF_YEAR)
         if (lastDay != dayOfYear) {
             rung.clear()
-            val dhuhr = Prefs.resolveDhuhrMinutes(this, level)
-            cachedSchedule = Schedule.buildDailySchedule(level, dhuhr)
+            cachedSchedule = RemoteConfig.getSchedule(this, level)
             lastDay = dayOfYear
         }
 
@@ -87,7 +111,7 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
             }
         }
 
-        updateOngoingNotification(cachedSchedule, nowMin)
+        updateOngoingNotification(cachedSchedule, nowMin, displayOnly = false)
     }
 
     private fun announce(text: String) {
@@ -121,13 +145,17 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-    private fun updateOngoingNotification(schedule: List<Period>, nowMin: Int) {
+    private fun updateOngoingNotification(schedule: List<Period>, nowMin: Int, displayOnly: Boolean) {
         val nm = getSystemService(NotificationManager::class.java)
-        nm.notify(NOTIF_ID_SERVICE, buildServiceNotification("Bell Control running", nextBellLabel(schedule, nowMin)))
+        val text = when {
+            displayOnly -> "Combined display board — no bell audio here"
+            schedule.isEmpty() -> "Open the app to set the classroom level"
+            else -> nextBellLabel(schedule, nowMin)
+        }
+        nm.notify(NOTIF_ID_SERVICE, buildServiceNotification("Bell Control running", text))
     }
 
     private fun nextBellLabel(schedule: List<Period>, nowMin: Int): String {
-        if (schedule.isEmpty()) return "Open the app to set the classroom level"
         val upcoming = Schedule.boundaries(schedule).filter { it > nowMin }
         if (upcoming.isEmpty()) return "No more bells today"
         return "Next bell in ${upcoming.first() - nowMin} min"
@@ -157,5 +185,6 @@ class BellForegroundService : Service(), TextToSpeech.OnInitListener {
         const val CHANNEL_SERVICE = "bell_service"
         const val CHANNEL_ALERTS = "bell_alerts"
         const val NOTIF_ID_SERVICE = 1001
+        const val SYNC_INTERVAL_MS = 30 * 60 * 1000L
     }
 }

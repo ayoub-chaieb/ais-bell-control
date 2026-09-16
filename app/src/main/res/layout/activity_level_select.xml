@@ -27,15 +27,22 @@
 
     <Button
         android:id="@+id/elemButton"
-        android:layout_width="240dp"
+        android:layout_width="260dp"
         android:layout_height="wrap_content"
         android:text="Elementary"
         android:layout_marginBottom="14dp" />
 
     <Button
         android:id="@+id/mshsButton"
-        android:layout_width="240dp"
+        android:layout_width="260dp"
         android:layout_height="wrap_content"
-        android:text="Middle &amp; High School" />
+        android:text="Middle &amp; High School"
+        android:layout_marginBottom="14dp" />
+
+    <Button
+        android:id="@+id/allLevelsButton"
+        android:layout_width="260dp"
+        android:layout_height="wrap_content"
+        android:text="All Levels (combined display)" />
 
 </LinearLayout>

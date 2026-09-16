@@ -14,6 +14,7 @@ class LevelSelectActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.elemButton).setOnClickListener { choose(Level.ELEMENTARY) }
         findViewById<Button>(R.id.mshsButton).setOnClickListener { choose(Level.MIDDLE_HIGH) }
+        findViewById<Button>(R.id.allLevelsButton).setOnClickListener { choose(Level.ALL_LEVELS) }
     }
 
     private fun choose(level: Level) {

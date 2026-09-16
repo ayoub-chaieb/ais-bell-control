@@ -3,6 +3,8 @@ package com.ascendant.bellcontrol
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -22,7 +24,19 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var level: Level
     private var cachedDay = -1
-    private var cachedSchedule: List<Period> = emptyList()
+
+    private data class Panel(
+        val level: Level,
+        val periodName: TextView,
+        val periodTime: TextView,
+        val progressBar: ProgressBar,
+        val countdownText: TextView,
+        val countdownLabel: TextView,
+        val table: LinearLayout,
+        var schedule: List<Period> = emptyList()
+    )
+
+    private val panels = mutableListOf<Panel>()
 
     private val tick = object : Runnable {
         override fun run() {
@@ -54,6 +68,8 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
 
+        buildPanels()
+
         val svcIntent = Intent(this, BellForegroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svcIntent)
         else startService(svcIntent)
@@ -67,10 +83,12 @@ class MainActivity : AppCompatActivity() {
             finish()
             return
         }
-        level = chosen
-        findViewById<TextView>(R.id.levelLabel).text =
-            if (level == Level.ELEMENTARY) "Elementary" else "Middle & High School"
-        cachedDay = -1 // force schedule rebuild in case level or Dhuhr settings changed
+        if (chosen != level || panels.isEmpty()) {
+            level = chosen
+            buildPanels()
+        }
+        cachedDay = -1
+        RemoteConfig.syncNow(this) // pick up any sheet edits made since last open
         handler.post(tick)
     }
 
@@ -79,21 +97,93 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacks(tick)
     }
 
-    private fun todaySchedule(): List<Period> {
-        val day = Calendar.getInstance().get(Calendar.DAY_OF_YEAR)
-        if (day != cachedDay) {
-            val dhuhr = Prefs.resolveDhuhrMinutes(this, level)
-            cachedSchedule = Schedule.buildDailySchedule(level, dhuhr)
-            cachedDay = day
-            renderTable(cachedSchedule)
-        }
-        return cachedSchedule
+    private fun buildPanels() {
+        val container = findViewById<LinearLayout>(R.id.panelsContainer)
+        container.removeAllViews()
+        panels.clear()
+
+        val levelsToShow =
+            if (level == Level.ALL_LEVELS) listOf(Level.ELEMENTARY, Level.MIDDLE_HIGH) else listOf(level)
+        levelsToShow.forEach { lvl -> panels.add(buildPanel(container, lvl)) }
     }
 
-    private fun renderTable(sched: List<Period>) {
-        val table = findViewById<LinearLayout>(R.id.scheduleTable)
-        table.removeAllViews()
-        sched.forEach { p ->
+    private fun buildPanel(container: LinearLayout, lvl: Level): Panel {
+        val outer = LinearLayout(this)
+        outer.orientation = LinearLayout.VERTICAL
+        outer.setPadding(0, 0, 0, 16)
+
+        val label = TextView(this)
+        label.text = if (lvl == Level.ELEMENTARY) "Elementary" else "Middle & High School"
+        label.setTextColor(0xFFC4914F.toInt())
+        label.textSize = 13f
+        label.setTypeface(null, Typeface.BOLD)
+        outer.addView(label)
+
+        val hero = LinearLayout(this)
+        hero.orientation = LinearLayout.VERTICAL
+        hero.setBackgroundColor(0xFF1A2E27.toInt())
+        hero.setPadding(36, 36, 36, 36)
+        val heroParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        heroParams.topMargin = 8
+        heroParams.bottomMargin = 16
+        hero.layoutParams = heroParams
+
+        val periodName = TextView(this)
+        periodName.text = "Loading…"
+        periodName.setTextColor(0xFFECE3D2.toInt())
+        periodName.textSize = 24f
+        hero.addView(periodName)
+
+        val periodTime = TextView(this)
+        periodTime.setTextColor(0xFF9FAE9C.toInt())
+        periodTime.textSize = 13f
+        val ptParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        ptParams.bottomMargin = 20
+        periodTime.layoutParams = ptParams
+        hero.addView(periodTime)
+
+        val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
+        progressBar.max = 1000
+        progressBar.progressTintList = ColorStateList.valueOf(0xFFC4914F.toInt())
+        val pbParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 12)
+        pbParams.bottomMargin = 16
+        progressBar.layoutParams = pbParams
+        hero.addView(progressBar)
+
+        val cdRow = LinearLayout(this)
+        cdRow.orientation = LinearLayout.HORIZONTAL
+        cdRow.gravity = Gravity.BOTTOM
+
+        val countdownText = TextView(this)
+        countdownText.text = "--:--"
+        countdownText.setTextColor(0xFFC4914F.toInt())
+        countdownText.textSize = 30f
+        cdRow.addView(countdownText)
+
+        val countdownLabel = TextView(this)
+        countdownLabel.setTextColor(0xFF9FAE9C.toInt())
+        countdownLabel.textSize = 12f
+        val clParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        clParams.marginStart = 10
+        countdownLabel.layoutParams = clParams
+        cdRow.addView(countdownLabel)
+
+        hero.addView(cdRow)
+        outer.addView(hero)
+
+        val table = LinearLayout(this)
+        table.orientation = LinearLayout.VERTICAL
+        table.setBackgroundColor(0xFF1A2E27.toInt())
+        outer.addView(table)
+
+        container.addView(outer)
+
+        return Panel(lvl, periodName, periodTime, progressBar, countdownText, countdownLabel, table)
+    }
+
+    private fun renderTable(panel: Panel) {
+        panel.table.removeAllViews()
+        panel.schedule.forEach { p ->
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
             row.setPadding(24, 20, 24, 20)
@@ -113,7 +203,7 @@ class MainActivity : AppCompatActivity() {
 
             row.addView(name)
             row.addView(time)
-            table.addView(row)
+            panel.table.addView(row)
         }
     }
 
@@ -136,8 +226,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateUi() {
-        val sched = todaySchedule()
         val now = Calendar.getInstance()
+        val day = now.get(Calendar.DAY_OF_YEAR)
+        if (day != cachedDay) {
+            panels.forEach { it.schedule = RemoteConfig.getSchedule(this, it.level) }
+            cachedDay = day
+            panels.forEach { renderTable(it) }
+        }
 
         findViewById<TextView>(R.id.clockText).text = String.format(
             Locale.US, "%02d:%02d:%02d",
@@ -150,45 +245,50 @@ class MainActivity : AppCompatActivity() {
                 now.get(Calendar.MINUTE) +
                 now.get(Calendar.SECOND) / 60.0
 
-        val nameEl = findViewById<TextView>(R.id.periodName)
-        val timeEl = findViewById<TextView>(R.id.periodTime)
-        val bar = findViewById<ProgressBar>(R.id.progressBar)
-        val cd = findViewById<TextView>(R.id.countdownText)
-        val cdLabel = findViewById<TextView>(R.id.countdownLabel)
+        panels.forEach { panel -> updatePanel(panel, nowMin) }
+    }
 
+    private fun updatePanel(panel: Panel, nowMin: Double) {
+        val sched = panel.schedule
         val current = sched.find { nowMin >= it.startMin && nowMin < it.endMin }
 
         when {
             current != null -> {
-                nameEl.text = current.name
-                timeEl.text = "${to12h(current.startMin)} – ${to12h(current.endMin)}"
+                panel.periodName.text = current.name
+                panel.periodTime.text = "${to12h(current.startMin)} – ${to12h(current.endMin)}"
                 val total = (current.endMin - current.startMin).toDouble()
                 val done = nowMin - current.startMin
-                bar.progress = ((done / total) * 1000).toInt().coerceIn(0, 1000)
+                panel.progressBar.progress = ((done / total) * 1000).toInt().coerceIn(0, 1000)
                 val secsLeft = ((current.endMin - nowMin) * 60).toInt()
-                cd.text = formatSecs(secsLeft)
+                panel.countdownText.text = formatSecs(secsLeft)
                 val idx = sched.indexOf(current)
-                cdLabel.text = "until " + if (idx + 1 < sched.size) sched[idx + 1].name else "dismissal"
+                panel.countdownLabel.text = "until " + if (idx + 1 < sched.size) sched[idx + 1].name else "dismissal"
             }
             sched.isNotEmpty() && nowMin < sched.first().startMin -> {
-                nameEl.text = "Before school"
-                timeEl.text = "First bell at ${to12h(sched.first().startMin)}"
-                bar.progress = 0
-                cd.text = formatSecs(((sched.first().startMin - nowMin) * 60).toInt())
-                cdLabel.text = "until ${sched.first().name}"
+                panel.periodName.text = "Before school"
+                panel.periodTime.text = "First bell at ${to12h(sched.first().startMin)}"
+                panel.progressBar.progress = 0
+                panel.countdownText.text = formatSecs(((sched.first().startMin - nowMin) * 60).toInt())
+                panel.countdownLabel.text = "until ${sched.first().name}"
+            }
+            sched.isEmpty() -> {
+                panel.periodName.text = "No schedule synced yet"
+                panel.periodTime.text = ""
+                panel.progressBar.progress = 0
+                panel.countdownText.text = "—:—"
+                panel.countdownLabel.text = ""
             }
             else -> {
-                nameEl.text = "School day is over"
-                timeEl.text = "See you tomorrow"
-                bar.progress = 1000
-                cd.text = "—:—"
-                cdLabel.text = ""
+                panel.periodName.text = "School day is over"
+                panel.periodTime.text = "See you tomorrow"
+                panel.progressBar.progress = 1000
+                panel.countdownText.text = "—:—"
+                panel.countdownLabel.text = ""
             }
         }
 
-        val table = findViewById<LinearLayout>(R.id.scheduleTable)
-        for (i in 0 until table.childCount) {
-            val row = table.getChildAt(i) as LinearLayout
+        for (i in 0 until panel.table.childCount) {
+            val row = panel.table.getChildAt(i) as LinearLayout
             val p = row.tag as? Period ?: continue
             row.setBackgroundColor(if (p == current) 0x1FC4914F else 0x00000000)
         }

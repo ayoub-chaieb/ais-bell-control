@@ -7,7 +7,7 @@ bell system — spoken period announcements, on-screen live schedule, and a
 centrally-managed timetable that every board picks up on its own, with no
 backend server to run or pay for.
 
-Built for Almanhal Schools, Riyadh. Runs on BenQ interactive displays as an
+Built for Andalus International Schools, Riyadh. Runs on BenQ interactive displays as an
 always-on background app rather than a browser tab, so it survives screen
 locks, app switching, and reboots — the requirements a browser page can't
 meet.
